@@ -6,8 +6,8 @@ use std::{
 
 use anyhow::{bail, Context};
 use crossterm::event::{
-    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
-    MouseEventKind,
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode, MouseButton,
+    MouseEvent, MouseEventKind,
 };
 use ratatui_textarea::Scrolling;
 use unicode_normalization::UnicodeNormalization;
@@ -238,15 +238,40 @@ fn write_output(path: Option<&Path>, output: &str) -> anyhow::Result<()> {
 
 pub fn handle_event(event: Event, app: &mut App, hit_areas: &[HitArea]) {
     match event {
-        Event::Key(key) if key.kind != KeyEventKind::Release => handle_key(key, app),
+        Event::Key(key) => handle_key_event(key, app),
         Event::Mouse(mouse) => handle_mouse(mouse, app, hit_areas),
         Event::Paste(text) => {
             if let Some(editor) = app.editor.as_mut() {
                 editor.textarea.insert_str(text);
             }
         }
-        Event::FocusGained | Event::FocusLost | Event::Resize(_, _) | Event::Key(_) => {}
+        Event::FocusGained | Event::FocusLost | Event::Resize(_, _) => {}
     }
+}
+
+fn handle_key_event(key: KeyEvent, app: &mut App) {
+    if key.kind == KeyEventKind::Release {
+        if is_shift_modifier(key.code) {
+            app.finish_shift_selection();
+        }
+        return;
+    }
+
+    if app.editor.is_none()
+        && app.keyboard_shift_anchor.is_some()
+        && !key.modifiers.contains(KeyModifiers::SHIFT)
+        && !is_shift_modifier(key.code)
+    {
+        app.finish_shift_selection();
+    }
+    handle_key(key, app);
+}
+
+fn is_shift_modifier(code: KeyCode) -> bool {
+    matches!(
+        code,
+        KeyCode::Modifier(ModifierKeyCode::LeftShift | ModifierKeyCode::RightShift)
+    )
 }
 
 pub fn handle_key(key: KeyEvent, app: &mut App) {
@@ -288,6 +313,12 @@ fn handle_browse_key(key: KeyEvent, app: &mut App) {
         KeyCode::Char('q') => app.should_quit = true,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.should_quit = true;
+        }
+        KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            app.extend_shift_selection(1);
+        }
+        KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            app.extend_shift_selection(-1);
         }
         KeyCode::Down | KeyCode::Char('j') => app.move_cursor(1),
         KeyCode::Up | KeyCode::Char('k') => app.move_cursor(-1),
@@ -421,6 +452,63 @@ mod tests {
         assert_eq!(app.review.comments[0].start_line, 1);
         assert_eq!(app.review.comments[0].end_line, 2);
         assert_eq!(app.review.comments[0].body, "x");
+    }
+
+    #[test]
+    fn shift_arrows_open_the_selected_range_when_shift_is_released() {
+        let mut app = app();
+        handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT), &mut app);
+        handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT), &mut app);
+        assert_eq!(app.selection.unwrap().normalized(), (1, 3));
+
+        handle_event(
+            Event::Key(KeyEvent::new_with_kind(
+                KeyCode::Modifier(ModifierKeyCode::LeftShift),
+                KeyModifiers::SHIFT,
+                KeyEventKind::Release,
+            )),
+            &mut app,
+            &[],
+        );
+
+        let editor = app.editor.as_ref().unwrap();
+        assert_eq!((editor.start_line, editor.end_line), (1, 3));
+    }
+
+    #[test]
+    fn shift_up_selects_a_reverse_range() {
+        let mut app = app();
+        app.move_to_line(3);
+        handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT), &mut app);
+        handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT), &mut app);
+        handle_event(
+            Event::Key(KeyEvent::new_with_kind(
+                KeyCode::Modifier(ModifierKeyCode::RightShift),
+                KeyModifiers::SHIFT,
+                KeyEventKind::Release,
+            )),
+            &mut app,
+            &[],
+        );
+
+        let editor = app.editor.as_ref().unwrap();
+        assert_eq!((editor.start_line, editor.end_line), (1, 3));
+    }
+
+    #[test]
+    fn first_unshifted_key_finalizes_selection_on_legacy_terminals() {
+        let mut app = app();
+        handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT), &mut app);
+
+        handle_event(
+            Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+            &mut app,
+            &[],
+        );
+
+        let editor = app.editor.as_ref().unwrap();
+        assert_eq!((editor.start_line, editor.end_line), (1, 2));
+        assert_eq!(editor.body(), "x");
     }
 
     #[test]

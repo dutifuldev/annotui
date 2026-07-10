@@ -67,16 +67,17 @@ Mouse controls:
 - Drag source lines and release to comment on the range.
 - Click a comment to edit it.
 - Use the wheel to scroll the document or active editor.
+- Saved ranges keep a green rail beside every source line they cover.
 
 Keyboard controls:
 
 | Key | Action |
 | --- | --- |
 | `j` / `k`, arrows | Move between source lines |
+| `Shift-Up` / `Shift-Down` | Select a range; release Shift to write the comment |
 | `v` | Start or cancel range selection |
 | `Enter` | Comment on the cursor/range, or save an active comment |
 | `Ctrl-O` | Insert a newline in a comment |
-| `Ctrl-A` / `Ctrl-E` | Move to the beginning/end of the editor line |
 | `Esc` | Cancel selection or editing |
 | `e` / `d` | Edit or delete a comment on the cursor line |
 | `[` / `]` | Jump to the previous/next comment |
