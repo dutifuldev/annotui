@@ -248,7 +248,10 @@ fn render_comment_row(frame: &mut Frame<'_>, area: Rect, text: &str, first: bool
     } else {
         Style::default().fg(Color::Green).bg(Color::Rgb(20, 35, 25))
     };
-    frame.render_widget(Paragraph::new(format!("{prefix}{text}")).style(style), area);
+    frame.render_widget(
+        Paragraph::new(format!("{prefix}{}", expand_tabs(text))).style(style),
+        area,
+    );
 }
 
 fn extend_editor_rect(editor_rect: &mut Option<Rect>, row: Rect) {
@@ -395,6 +398,13 @@ mod tests {
         let rendered = terminal.backend().to_string();
         assert!(rendered.contains("Comment on lines 1–2"));
         assert!(rendered.contains("Ctrl-O newline"));
+
+        app.cancel_editor();
+        app.review.comments[0].body = "\tcode".into();
+        terminal
+            .draw(|frame| drop(render_app(frame, &mut app)))
+            .unwrap();
+        assert!(terminal.backend().to_string().contains("└─     code"));
     }
 
     #[test]

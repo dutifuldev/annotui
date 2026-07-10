@@ -286,7 +286,11 @@ fn handle_browse_key(key: KeyEvent, app: &mut App) {
         KeyCode::Char('e') => {
             app.edit_comment_at_cursor();
         }
-        KeyCode::Char('d') => {
+        KeyCode::Char('d')
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
             app.delete_comment_at_cursor();
         }
         KeyCode::Char(']') => app.jump_comment(true),
@@ -396,6 +400,24 @@ mod tests {
         assert_eq!(app.review.comments[0].start_line, 1);
         assert_eq!(app.review.comments[0].end_line, 2);
         assert_eq!(app.review.comments[0].body, "x");
+    }
+
+    #[test]
+    fn modified_d_does_not_delete_a_comment() {
+        let mut app = app();
+        app.review.upsert_comment(crate::domain::Comment {
+            id: 1,
+            start_line: 1,
+            end_line: 1,
+            body: "keep me".into(),
+        });
+
+        handle_key(
+            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+            &mut app,
+        );
+
+        assert_eq!(app.review.comments.len(), 1);
     }
 
     #[test]
