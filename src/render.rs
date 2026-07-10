@@ -95,7 +95,13 @@ fn render_document(frame: &mut Frame<'_>, app: &mut App, area: Rect) -> Vec<HitA
                 hits.push(HitArea::new(rect, HitTarget::SourceLine(*line_number)));
             }
             DocumentRow::Comment { id, text, first } => {
-                render_comment_row(frame, rect, text, *first);
+                render_comment_row(
+                    frame,
+                    rect,
+                    text,
+                    *first,
+                    app.active_comment_id == Some(*id),
+                );
                 hits.push(HitArea::new(rect, HitTarget::Comment(*id)));
             }
             DocumentRow::Editor => extend_editor_rect(&mut editor_rect, rect),
@@ -218,13 +224,14 @@ fn render_source_row(
     frame.render_widget(Paragraph::new(line).style(style), area);
 }
 
-fn render_comment_row(frame: &mut Frame<'_>, area: Rect, text: &str, first: bool) {
+fn render_comment_row(frame: &mut Frame<'_>, area: Rect, text: &str, first: bool, active: bool) {
     let prefix = if first { "  └─ " } else { "     " };
-    frame.render_widget(
-        Paragraph::new(format!("{prefix}{text}"))
-            .style(Style::default().fg(Color::Green).bg(Color::Rgb(20, 35, 25))),
-        area,
-    );
+    let style = if active {
+        Style::default().fg(Color::Black).bg(Color::Green)
+    } else {
+        Style::default().fg(Color::Green).bg(Color::Rgb(20, 35, 25))
+    };
+    frame.render_widget(Paragraph::new(format!("{prefix}{text}")).style(style), area);
 }
 
 fn extend_editor_rect(editor_rect: &mut Option<Rect>, row: Rect) {

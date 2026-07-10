@@ -44,5 +44,6 @@ warnings. The initial and final field graphs were identical:
 | `comments[].end_line` | number | yes |
 | `comments[].body` | string | yes |
 
-The accepted product model is documented in [output-formats.md](output-formats.md) and
-implemented by the public Rust types in `src/domain.rs`.
+The accepted product model is documented in
+[the output format reference](2026-07-10-output-formats.md) and implemented by the
+public Rust types in `src/domain.rs`.

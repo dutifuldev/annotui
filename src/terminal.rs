@@ -34,17 +34,19 @@ impl TerminalGuard {
     pub fn enter(mouse_enabled: bool) -> anyhow::Result<(Self, AppTerminal)> {
         install_panic_hook();
         let mut tty = open_tty()?;
+        let guard = Self;
         enable_raw_mode()?;
         RAW_ENABLED.store(true, Ordering::SeqCst);
-        execute!(tty, EnterAlternateScreen, EnableBracketedPaste)?;
+        execute!(tty, EnterAlternateScreen)?;
         SCREEN_ENABLED.store(true, Ordering::SeqCst);
+        execute!(tty, EnableBracketedPaste)?;
         PASTE_ENABLED.store(true, Ordering::SeqCst);
         if mouse_enabled {
             execute!(tty, EnableMouseCapture)?;
             MOUSE_ENABLED.store(true, Ordering::SeqCst);
         }
         let terminal = Terminal::new(CrosstermBackend::new(tty))?;
-        Ok((Self, terminal))
+        Ok((guard, terminal))
     }
 }
 

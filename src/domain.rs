@@ -45,13 +45,20 @@ impl ReviewDocument {
     }
 
     #[must_use]
-    pub fn next_comment_id(&self) -> u64 {
-        self.comments
+    pub fn next_comment_id(&self) -> Option<u64> {
+        let used = self
+            .comments
             .iter()
             .map(|comment| comment.id)
-            .max()
-            .unwrap_or(0)
-            .saturating_add(1)
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut candidate = 1_u64;
+        for id in used {
+            if id > candidate {
+                return Some(candidate);
+            }
+            candidate = candidate.checked_add(1)?;
+        }
+        Some(candidate)
     }
 
     pub fn upsert_comment(&mut self, comment: Comment) {
@@ -178,7 +185,7 @@ mod tests {
             body: "updated".into(),
         });
 
-        assert_eq!(review.next_comment_id(), 5);
+        assert_eq!(review.next_comment_id(), Some(2));
         assert_eq!(
             review.comments.iter().map(|c| c.id).collect::<Vec<_>>(),
             [1, 4]
@@ -292,5 +299,32 @@ mod tests {
             review.validate(3),
             Err(ReviewValidationError::InvalidRange { .. })
         ));
+    }
+
+    #[test]
+    fn id_allocation_fills_gaps_including_below_the_maximum() {
+        let mut review = ReviewDocument::empty(source());
+        review.comments = vec![
+            Comment {
+                id: 2,
+                start_line: 1,
+                end_line: 1,
+                body: "two".into(),
+            },
+            Comment {
+                id: u64::MAX,
+                start_line: 1,
+                end_line: 1,
+                body: "maximum".into(),
+            },
+        ];
+        assert_eq!(review.next_comment_id(), Some(1));
+        review.comments.push(Comment {
+            id: 1,
+            start_line: 1,
+            end_line: 1,
+            body: "one".into(),
+        });
+        assert_eq!(review.next_comment_id(), Some(3));
     }
 }
