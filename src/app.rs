@@ -73,6 +73,7 @@ pub struct App {
     pub should_quit: bool,
     pub follow_cursor: bool,
     pub mouse_drag_anchor: Option<usize>,
+    pub keyboard_shift_anchor: Option<usize>,
     pub status: Option<String>,
     pub dirty: bool,
 }
@@ -92,6 +93,7 @@ impl App {
             should_quit: false,
             follow_cursor: true,
             mouse_drag_anchor: None,
+            keyboard_shift_anchor: None,
             status: None,
             dirty: false,
         }
@@ -122,6 +124,7 @@ impl App {
 
     pub fn begin_selection(&mut self, line: usize) {
         self.move_to_line(line);
+        self.keyboard_shift_anchor = None;
         self.selection = Some(Selection {
             anchor: self.cursor_line,
             current: self.cursor_line,
@@ -142,7 +145,26 @@ impl App {
 
     pub fn cancel_selection(&mut self) {
         self.selection = None;
+        self.keyboard_shift_anchor = None;
         self.status = None;
+    }
+
+    pub fn extend_shift_selection(&mut self, delta: isize) {
+        if self.keyboard_shift_anchor.is_none() {
+            if self.selection.is_none() {
+                self.begin_selection(self.cursor_line);
+            }
+            self.keyboard_shift_anchor = self.selection.map(|selection| selection.anchor);
+        }
+        self.move_cursor(delta);
+    }
+
+    pub fn finish_shift_selection(&mut self) -> bool {
+        if self.keyboard_shift_anchor.take().is_none() || self.selection.is_none() {
+            return false;
+        }
+        self.open_selected_editor();
+        true
     }
 
     pub fn open_selected_editor(&mut self) {
@@ -152,6 +174,7 @@ impl App {
         });
         let (start_line, end_line) = selection.normalized();
         self.cursor_line = end_line;
+        self.keyboard_shift_anchor = None;
         self.editor = Some(CommentEditor::new(None, start_line, end_line, ""));
         self.follow_cursor = true;
         self.status = None;
@@ -168,6 +191,7 @@ impl App {
             return false;
         };
         self.cursor_line = comment.end_line;
+        self.keyboard_shift_anchor = None;
         self.active_comment_id = Some(comment.id);
         self.selection = Some(Selection {
             anchor: comment.start_line,
@@ -210,6 +234,7 @@ impl App {
         });
         self.editor = None;
         self.selection = None;
+        self.keyboard_shift_anchor = None;
         self.status = Some("Comment saved".into());
         self.active_comment_id = Some(id);
         self.dirty = true;
@@ -219,6 +244,7 @@ impl App {
     pub fn cancel_editor(&mut self) {
         self.editor = None;
         self.selection = None;
+        self.keyboard_shift_anchor = None;
         self.status = Some("Edit cancelled".into());
     }
 
@@ -387,6 +413,21 @@ mod tests {
         app.cancel_selection();
         assert!(app.selection.is_none());
         assert!(app.status.is_none());
+    }
+
+    #[test]
+    fn shift_selection_extends_and_opens_the_editor_on_finish() {
+        let mut app = app();
+        app.extend_shift_selection(1);
+        app.extend_shift_selection(1);
+        assert_eq!(app.selection.unwrap().normalized(), (1, 3));
+        assert_eq!(app.keyboard_shift_anchor, Some(1));
+
+        assert!(app.finish_shift_selection());
+        let editor = app.editor.as_ref().unwrap();
+        assert_eq!((editor.start_line, editor.end_line), (1, 3));
+        assert!(app.keyboard_shift_anchor.is_none());
+        assert!(!app.finish_shift_selection());
     }
 
     #[test]

@@ -68,6 +68,8 @@ wait_for_pane "Comment on lines 1"
 tmux send-keys -t "$session" -l "human comment here ..."
 tmux send-keys -t "$session" Enter
 wait_for_pane "Comment saved"
+wait_for_pane "┃ quoted part line 1"
+wait_for_pane "┃ quoted part line 2"
 finish_tui
 
 printf '> quoted part line 1\n> quoted part line 2\n\nhuman comment here ...\n' >"$tmpdir/expected.md"
@@ -98,3 +100,23 @@ assert review["comments"] == [
     }
 ]
 PY
+
+start_tui "$tmpdir/shift-output.md" "--comments '$tmpdir/shift-review.json' --no-mouse"
+
+# Select all three source lines with Shift-Down, then inject a left-Shift release
+# using the Kitty keyboard protocol requested by the application.
+tmux send-keys -t "$session" Escape '[1;2B'
+tmux send-keys -t "$session" Escape '[1;2B'
+tmux send-keys -t "$session" Escape '[57441;2:3u'
+wait_for_pane "Comment on lines 1"
+
+tmux send-keys -t "$session" -l "keyboard range"
+tmux send-keys -t "$session" Enter
+wait_for_pane "Comment saved"
+wait_for_pane "┃ quoted part line 1"
+wait_for_pane "┃ quoted part line 2"
+wait_for_pane "┃ unquoted line"
+finish_tui
+
+printf '> quoted part line 1\n> quoted part line 2\n> unquoted line\n\nkeyboard range\n' >"$tmpdir/expected-shift.md"
+diff -u "$tmpdir/expected-shift.md" "$tmpdir/shift-output.md"

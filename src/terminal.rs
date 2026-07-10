@@ -8,7 +8,10 @@ use std::{
 };
 
 use crossterm::{
-    event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture},
+    event::{
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -21,6 +24,7 @@ static RAW_ENABLED: AtomicBool = AtomicBool::new(false);
 static SCREEN_ENABLED: AtomicBool = AtomicBool::new(false);
 static MOUSE_ENABLED: AtomicBool = AtomicBool::new(false);
 static PASTE_ENABLED: AtomicBool = AtomicBool::new(false);
+static KEYBOARD_ENHANCED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug)]
 pub struct TerminalGuard;
@@ -41,6 +45,15 @@ impl TerminalGuard {
         SCREEN_ENABLED.store(true, Ordering::SeqCst);
         execute!(tty, EnableBracketedPaste)?;
         PASTE_ENABLED.store(true, Ordering::SeqCst);
+        execute!(
+            tty,
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                    | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+            )
+        )?;
+        KEYBOARD_ENHANCED.store(true, Ordering::SeqCst);
         if mouse_enabled {
             execute!(tty, EnableMouseCapture)?;
             MOUSE_ENABLED.store(true, Ordering::SeqCst);
@@ -75,6 +88,11 @@ fn restore_terminal() {
     if MOUSE_ENABLED.swap(false, Ordering::SeqCst) {
         if let Some(tty) = &mut tty {
             let _ = execute!(tty, DisableMouseCapture);
+        }
+    }
+    if KEYBOARD_ENHANCED.swap(false, Ordering::SeqCst) {
+        if let Some(tty) = &mut tty {
+            let _ = execute!(tty, PopKeyboardEnhancementFlags);
         }
     }
     if PASTE_ENABLED.swap(false, Ordering::SeqCst) {

@@ -21,8 +21,16 @@ const TAB_STOP: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DocumentRow {
-    Source(usize),
-    Comment { id: u64, text: String, first: bool },
+    Source {
+        line_number: usize,
+        commented: bool,
+        active: bool,
+    },
+    Comment {
+        id: u64,
+        text: String,
+        first: bool,
+    },
     Editor,
 }
 
@@ -98,8 +106,20 @@ fn render_document(frame: &mut Frame<'_>, app: &mut App, area: Rect) -> Vec<HitA
             1,
         );
         match row {
-            DocumentRow::Source(line_number) => {
-                render_source_row(frame, app, rect, *line_number, line_digits);
+            DocumentRow::Source {
+                line_number,
+                commented,
+                active,
+            } => {
+                render_source_row(
+                    frame,
+                    app,
+                    rect,
+                    *line_number,
+                    line_digits,
+                    *commented,
+                    *active,
+                );
                 hits.push(HitArea::new(rect, HitTarget::SourceLine(*line_number)));
             }
             DocumentRow::Comment { id, text, first } => {
@@ -108,6 +128,7 @@ fn render_document(frame: &mut Frame<'_>, app: &mut App, area: Rect) -> Vec<HitA
                     rect,
                     text,
                     *first,
+                    line_digits,
                     app.active_comment_id == Some(*id),
                 );
                 hits.push(HitArea::new(rect, HitTarget::Comment(*id)));
@@ -140,7 +161,21 @@ fn document_rows(app: &App) -> Vec<DocumentRow> {
     let mut rows = Vec::new();
     let editing_id = app.editor.as_ref().and_then(|editor| editor.comment_id);
     let editor_end = app.editor.as_ref().map(|editor| editor.end_line);
+    let active_range = app.active_comment_id.and_then(|id| {
+        app.review
+            .comments
+            .iter()
+            .find(|comment| comment.id == id)
+            .map(|comment| (comment.start_line, comment.end_line))
+    });
     let mut comments_by_end = BTreeMap::<usize, Vec<_>>::new();
+    let mut range_events = BTreeMap::<usize, (usize, usize)>::new();
+    for comment in &app.review.comments {
+        range_events.entry(comment.start_line).or_default().0 += 1;
+        if comment.end_line < app.source.line_count() {
+            range_events.entry(comment.end_line + 1).or_default().1 += 1;
+        }
+    }
     for comment in app
         .review
         .comments
@@ -153,8 +188,23 @@ fn document_rows(app: &App) -> Vec<DocumentRow> {
             .push(comment);
     }
 
+    let mut events = range_events.into_iter().peekable();
+    let mut comments_covering_line = 0usize;
     for line_number in 1..=app.source.line_count() {
-        rows.push(DocumentRow::Source(line_number));
+        if events
+            .peek()
+            .is_some_and(|(event_line, _)| *event_line == line_number)
+        {
+            let (_, (starts, ends)) = events.next().unwrap_or_default();
+            comments_covering_line = comments_covering_line.saturating_sub(ends);
+            comments_covering_line = comments_covering_line.saturating_add(starts);
+        }
+        rows.push(DocumentRow::Source {
+            line_number,
+            commented: comments_covering_line > 0,
+            active: active_range
+                .is_some_and(|(start, end)| start <= line_number && line_number <= end),
+        });
         if let Some(comments) = comments_by_end.get(&line_number) {
             for comment in comments {
                 for (index, body_line) in comment.body.lines().enumerate() {
@@ -182,15 +232,24 @@ fn update_scroll(app: &mut App, rows: &[DocumentRow], viewport_height: usize) {
 
     let source_row = rows
         .iter()
-        .position(|row| matches!(row, DocumentRow::Source(line) if *line == app.cursor_line))
+        .position(|row| {
+            matches!(
+                row,
+                DocumentRow::Source { line_number, .. } if *line_number == app.cursor_line
+            )
+        })
         .unwrap_or(0);
     let target_row = if app.editor.is_some() {
         rows.iter()
             .enumerate()
             .skip(source_row)
-            .take_while(
-                |(_, row)| !matches!(row, DocumentRow::Source(line) if *line > app.cursor_line),
-            )
+            .take_while(|(_, row)| {
+                !matches!(
+                    row,
+                    DocumentRow::Source { line_number, .. }
+                        if *line_number > app.cursor_line
+                )
+            })
             .map(|(index, _)| index)
             .last()
             .unwrap_or(source_row)
@@ -213,13 +272,15 @@ fn render_source_row(
     area: Rect,
     line_number: usize,
     line_digits: usize,
+    commented: bool,
+    active: bool,
 ) {
     let selected = app
         .selection
         .is_some_and(|selection| selection.contains(line_number));
     let cursor = app.cursor_line == line_number && app.editor.is_none();
     let marker = if cursor { "▶" } else { " " };
-    let number = format!("{marker}{line_number:>line_digits$} │ ");
+    let number = format!("{marker}{line_number:>line_digits$} ");
     let text = horizontally_scrolled(
         app.source.line(line_number).unwrap_or_default(),
         app.horizontal_scroll,
@@ -234,15 +295,41 @@ fn render_source_row(
     } else {
         Style::default().fg(Color::DarkGray)
     };
+    let rail = if commented { "┃" } else { "│" };
+    let rail_style = if active {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    } else if commented {
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        number_style
+    };
     let line = Line::from(vec![
         Span::styled(number, number_style),
+        Span::styled(rail, rail_style),
+        Span::styled(" ", style),
         Span::styled(text, style),
     ]);
     frame.render_widget(Paragraph::new(line).style(style), area);
 }
 
-fn render_comment_row(frame: &mut Frame<'_>, area: Rect, text: &str, first: bool, active: bool) {
-    let prefix = if first { "  └─ " } else { "     " };
+fn render_comment_row(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    text: &str,
+    first: bool,
+    line_digits: usize,
+    active: bool,
+) {
+    let prefix = if first {
+        format!("{}└─ ", " ".repeat(line_digits + 2))
+    } else {
+        " ".repeat(line_digits + 5)
+    };
     let style = if active {
         Style::default().fg(Color::Black).bg(Color::Green)
     } else {
@@ -295,16 +382,21 @@ fn expand_tabs(text: &str) -> String {
 
 fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let help = if app.editor.is_some() {
-        " Enter save · Ctrl-O newline · Esc cancel · Ctrl-A/E line start/end "
+        " Enter save · Esc cancel "
     } else if let Some(selection) = app.selection {
         let (start, end) = selection.normalized();
+        let finish = if app.keyboard_shift_anchor.is_some() {
+            "release Shift or Enter"
+        } else {
+            "Enter"
+        };
         return render_footer_text(
             frame,
             area,
-            &format!(" Lines {start}–{end} selected · Enter comment · Esc cancel "),
+            &format!(" Lines {start}–{end} selected · {finish} to comment · Esc cancel "),
         );
     } else {
-        " drag select · Enter comment · e edit · d delete · [/] comments · q output & quit "
+        " drag or Shift-↑/↓ select · Enter comment · e edit · d delete · [/] comments · q quit "
     };
     let text = app.status.as_deref().unwrap_or(help);
     render_footer_text(frame, area, text);
@@ -388,7 +480,11 @@ mod tests {
         terminal
             .draw(|frame| hits = render_app(frame, &mut app))
             .unwrap();
-        assert!(terminal.backend().to_string().contains("└─ first line"));
+        let rendered = terminal.backend().to_string();
+        assert!(rendered.contains("1 ┃ one"));
+        assert!(rendered.contains("2 ┃ two"));
+        assert!(rendered.contains("3 │ three"));
+        assert!(rendered.contains("└─ first line"));
         assert!(hits.iter().any(|hit| hit.target == HitTarget::Comment(1)));
 
         app.begin_edit(1);
@@ -397,7 +493,8 @@ mod tests {
             .unwrap();
         let rendered = terminal.backend().to_string();
         assert!(rendered.contains("Comment on lines 1–2"));
-        assert!(rendered.contains("Ctrl-O newline"));
+        assert!(!rendered.contains("Ctrl-O"));
+        assert!(!rendered.contains("Ctrl-A"));
 
         app.cancel_editor();
         app.review.comments[0].body = "\tcode".into();
