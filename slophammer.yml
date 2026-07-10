@@ -1,0 +1,42 @@
+rust:
+  coverage:
+    threshold: 85
+    paths:
+      - src
+    exclude:
+      - "target/**"
+      - "tests/**"
+      - pattern: "src/main.rs"
+        reason: process entrypoint is exercised through the tmux end-to-end test
+      - pattern: "src/runner.rs"
+        reason: controlling-terminal event loop is exercised through the tmux end-to-end test
+      - pattern: "src/terminal.rs"
+        reason: raw /dev/tty lifecycle is exercised through the tmux end-to-end test
+  complexity:
+    cognitive_max: 8
+  targets:
+    - src
+  exclude:
+    - "target/**"
+    - "tests/**"
+  dry:
+    max_findings: 0
+    paths:
+      - src
+    exclude:
+      - "target/**"
+      - "tests/**"
+    copied_blocks:
+      enabled: true
+      min_tokens: 100
+  unsafe:
+    policy: forbid
+  mutation:
+    targets:
+      - src/app.rs
+      - src/domain.rs
+      - src/output.rs
+      - src/source.rs
+  dependency_boundaries:
+    - from: .
+      allow: []
