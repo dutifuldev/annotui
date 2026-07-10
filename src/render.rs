@@ -382,7 +382,7 @@ fn expand_tabs(text: &str) -> String {
 
 fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let help = if app.editor.is_some() {
-        " Enter save · Ctrl-O newline · Esc cancel "
+        " Enter save · Esc cancel "
     } else if let Some(selection) = app.selection {
         let (start, end) = selection.normalized();
         let finish = if app.keyboard_shift_anchor.is_some() {
@@ -493,7 +493,7 @@ mod tests {
             .unwrap();
         let rendered = terminal.backend().to_string();
         assert!(rendered.contains("Comment on lines 1–2"));
-        assert!(rendered.contains("Ctrl-O newline"));
+        assert!(!rendered.contains("Ctrl-O"));
         assert!(!rendered.contains("Ctrl-A"));
 
         app.cancel_editor();

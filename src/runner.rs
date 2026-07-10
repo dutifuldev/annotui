@@ -262,7 +262,10 @@ fn handle_key_event(key: KeyEvent, app: &mut App) {
         && !key.modifiers.contains(KeyModifiers::SHIFT)
         && !is_shift_modifier(key.code)
     {
-        app.finish_shift_selection();
+        let finalized = app.finish_shift_selection();
+        if finalized && key.code == KeyCode::Enter {
+            return;
+        }
     }
     handle_key(key, app);
 }
@@ -509,6 +512,23 @@ mod tests {
         let editor = app.editor.as_ref().unwrap();
         assert_eq!((editor.start_line, editor.end_line), (1, 2));
         assert_eq!(editor.body(), "x");
+    }
+
+    #[test]
+    fn enter_finalizes_a_legacy_shift_selection_without_submitting_it() {
+        let mut app = app();
+        handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT), &mut app);
+
+        handle_event(
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            &mut app,
+            &[],
+        );
+
+        let editor = app.editor.as_ref().unwrap();
+        assert_eq!((editor.start_line, editor.end_line), (1, 2));
+        assert_eq!(editor.body(), "");
+        assert!(app.status.is_none());
     }
 
     #[test]
