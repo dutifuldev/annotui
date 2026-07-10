@@ -1,7 +1,7 @@
 use std::{
     fs,
     io::{self, IsTerminal, Read, Write},
-    path::{Component, Path, PathBuf},
+    path::Path,
 };
 
 use anyhow::{bail, Context};
@@ -19,7 +19,7 @@ use crate::{
     output::format_review,
     render::render_app,
     source::SourceBuffer,
-    storage::{load_review, save_review},
+    storage::{load_review, resolve_destination, save_review},
     terminal::TerminalGuard,
 };
 
@@ -110,7 +110,7 @@ fn ensure_distinct_destinations(cli: &Cli) -> anyhow::Result<()> {
 }
 
 fn paths_alias(left: &Path, right: &Path) -> anyhow::Result<bool> {
-    if comparable_destination(left)? == comparable_destination(right)? {
+    if resolve_destination(left)? == resolve_destination(right)? {
         return Ok(true);
     }
     if left.exists() && right.exists() {
@@ -118,77 +118,6 @@ fn paths_alias(left: &Path, right: &Path) -> anyhow::Result<bool> {
             .with_context(|| format!("compare {} and {}", left.display(), right.display()));
     }
     Ok(false)
-}
-
-fn comparable_destination(path: &Path) -> anyhow::Result<PathBuf> {
-    let absolute = if path.is_absolute() {
-        path.to_owned()
-    } else {
-        std::env::current_dir()
-            .context("resolve current directory")?
-            .join(path)
-    };
-    resolve_symlinks(&normalize_lexically(&absolute), path)
-}
-
-fn resolve_symlinks(absolute: &Path, original: &Path) -> anyhow::Result<PathBuf> {
-    let mut unresolved = absolute.to_owned();
-    for _ in 0..40 {
-        let mut resolved = PathBuf::new();
-        let components = unresolved.components().collect::<Vec<_>>();
-        let mut followed = false;
-
-        for (index, component) in components.iter().enumerate() {
-            resolved.push(component.as_os_str());
-            match fs::symlink_metadata(&resolved) {
-                Ok(metadata) if metadata.file_type().is_symlink() => {
-                    let target = fs::read_link(&resolved)
-                        .with_context(|| format!("resolve destination {}", original.display()))?;
-                    let parent = resolved.parent().unwrap_or_else(|| Path::new("/"));
-                    let mut next = if target.is_absolute() {
-                        target
-                    } else {
-                        parent.join(target)
-                    };
-                    for remaining in &components[index + 1..] {
-                        next.push(remaining.as_os_str());
-                    }
-                    unresolved = normalize_lexically(&next);
-                    followed = true;
-                    break;
-                }
-                Ok(_) => {}
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(error)
-                        .with_context(|| format!("resolve destination {}", original.display()));
-                }
-            }
-        }
-        if !followed {
-            return Ok(normalize_lexically(&resolved));
-        }
-    }
-    bail!(
-        "too many symbolic links while resolving {}",
-        original.display()
-    )
-}
-
-fn normalize_lexically(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::RootDir | Component::Prefix(_) | Component::Normal(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
-    }
-    normalized
 }
 
 fn read_stdin() -> anyhow::Result<Vec<u8>> {
