@@ -110,14 +110,63 @@ fn ensure_distinct_destinations(cli: &Cli) -> anyhow::Result<()> {
 }
 
 fn paths_alias(left: &Path, right: &Path) -> anyhow::Result<bool> {
-    if resolve_destination(left)? == resolve_destination(right)? {
+    let resolved_left = resolve_destination(left)?;
+    let resolved_right = resolve_destination(right)?;
+    if resolved_left == resolved_right {
         return Ok(true);
     }
     if left.exists() && right.exists() {
         return same_file::is_same_file(left, right)
             .with_context(|| format!("compare {} and {}", left.display(), right.display()));
     }
+    if paths_differ_only_by_case(&resolved_left, &resolved_right)
+        && nearest_existing_ancestor(&resolved_left)
+            .or_else(|| nearest_existing_ancestor(&resolved_right))
+            .is_some_and(filesystem_is_case_insensitive)
+    {
+        return Ok(true);
+    }
     Ok(false)
+}
+
+fn paths_differ_only_by_case(left: &Path, right: &Path) -> bool {
+    left.to_str()
+        .zip(right.to_str())
+        .is_some_and(|(left, right)| left.to_lowercase() == right.to_lowercase())
+}
+
+fn nearest_existing_ancestor(path: &Path) -> Option<&Path> {
+    path.ancestors().find(|ancestor| ancestor.exists())
+}
+
+fn filesystem_is_case_insensitive(path: &Path) -> bool {
+    path.ancestors().any(|ancestor| {
+        let Some(file_name) = ancestor.file_name().and_then(|name| name.to_str()) else {
+            return false;
+        };
+        let Some(toggled_name) = toggle_first_ascii_letter(file_name) else {
+            return false;
+        };
+        let toggled = ancestor.with_file_name(toggled_name);
+        toggled.exists() && same_file::is_same_file(ancestor, toggled).unwrap_or(false)
+    })
+}
+
+fn toggle_first_ascii_letter(value: &str) -> Option<String> {
+    let mut toggled = value.to_owned();
+    let (index, character) = value
+        .char_indices()
+        .find(|(_, character)| character.is_ascii_alphabetic())?;
+    let replacement = if character.is_ascii_lowercase() {
+        character.to_ascii_uppercase()
+    } else {
+        character.to_ascii_lowercase()
+    };
+    toggled.replace_range(
+        index..index + character.len_utf8(),
+        &replacement.to_string(),
+    );
+    Some(toggled)
 }
 
 fn read_stdin() -> anyhow::Result<Vec<u8>> {
@@ -523,5 +572,21 @@ mod tests {
         ])
         .unwrap();
         assert!(ensure_distinct_destinations(&cli).is_err());
+    }
+
+    #[test]
+    fn recognizes_case_only_path_differences() {
+        assert!(paths_differ_only_by_case(
+            Path::new("/tmp/review.json"),
+            Path::new("/TMP/REVIEW.JSON")
+        ));
+        assert!(!paths_differ_only_by_case(
+            Path::new("/tmp/review.json"),
+            Path::new("/tmp/output.json")
+        ));
+        assert_eq!(
+            toggle_first_ascii_letter("review.json").as_deref(),
+            Some("Review.json")
+        );
     }
 }

@@ -1,4 +1,6 @@
 use std::{
+    collections::VecDeque,
+    ffi::OsString,
     fs,
     io::{self, Write},
     path::{Component, Path, PathBuf},
@@ -68,60 +70,72 @@ pub(crate) fn resolve_destination(path: &Path) -> Result<PathBuf> {
             .context("resolve current directory")?
             .join(path)
     };
-    let mut unresolved = normalize_lexically(&absolute);
-    for _ in 0..40 {
-        let mut resolved = PathBuf::new();
-        let components = unresolved.components().collect::<Vec<_>>();
-        let mut followed = false;
-
-        for (index, component) in components.iter().enumerate() {
-            resolved.push(component.as_os_str());
-            match fs::symlink_metadata(&resolved) {
-                Ok(metadata) if metadata.file_type().is_symlink() => {
-                    let target = fs::read_link(&resolved)
-                        .with_context(|| format!("resolve destination {}", path.display()))?;
-                    let parent = resolved.parent().unwrap_or_else(|| Path::new("/"));
-                    let mut next = if target.is_absolute() {
-                        target
-                    } else {
-                        parent.join(target)
-                    };
-                    for remaining in &components[index + 1..] {
-                        next.push(remaining.as_os_str());
+    let mut pending = owned_components(&absolute);
+    let mut resolved = PathBuf::new();
+    let mut followed_links = 0;
+    while let Some(component) = pending.pop_front() {
+        match component {
+            OwnedComponent::Root => {
+                resolved.clear();
+                resolved.push(Path::new("/"));
+            }
+            OwnedComponent::Prefix(prefix) => {
+                resolved.clear();
+                resolved.push(prefix);
+            }
+            OwnedComponent::Parent => {
+                resolved.pop();
+            }
+            OwnedComponent::Normal(name) => {
+                let candidate = resolved.join(&name);
+                match fs::symlink_metadata(&candidate) {
+                    Ok(metadata) if metadata.file_type().is_symlink() => {
+                        followed_links += 1;
+                        if followed_links > 40 {
+                            anyhow::bail!(
+                                "too many symbolic links while resolving {}",
+                                path.display()
+                            );
+                        }
+                        let target = fs::read_link(&candidate)
+                            .with_context(|| format!("resolve destination {}", path.display()))?;
+                        for target_component in owned_components(&target).into_iter().rev() {
+                            pending.push_front(target_component);
+                        }
                     }
-                    unresolved = normalize_lexically(&next);
-                    followed = true;
-                    break;
-                }
-                Ok(_) => {}
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(error)
-                        .with_context(|| format!("resolve destination {}", path.display()));
+                    Ok(_) => resolved.push(name),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => resolved.push(name),
+                    Err(error) => {
+                        return Err(error)
+                            .with_context(|| format!("resolve destination {}", path.display()));
+                    }
                 }
             }
         }
-        if !followed {
-            return Ok(normalize_lexically(&resolved));
-        }
     }
-    anyhow::bail!("too many symbolic links while resolving {}", path.display())
+    Ok(resolved)
 }
 
-fn normalize_lexically(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
+#[derive(Debug)]
+enum OwnedComponent {
+    Prefix(OsString),
+    Root,
+    Parent,
+    Normal(OsString),
+}
+
+fn owned_components(path: &Path) -> VecDeque<OwnedComponent> {
+    path.components()
+        .filter_map(|component| match component {
+            Component::Prefix(prefix) => {
+                Some(OwnedComponent::Prefix(prefix.as_os_str().to_owned()))
             }
-            Component::RootDir | Component::Prefix(_) | Component::Normal(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
-    }
-    normalized
+            Component::RootDir => Some(OwnedComponent::Root),
+            Component::CurDir => None,
+            Component::ParentDir => Some(OwnedComponent::Parent),
+            Component::Normal(name) => Some(OwnedComponent::Normal(name.to_owned())),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -195,5 +209,22 @@ mod tests {
             .file_type()
             .is_symlink());
         assert_eq!(load_review(&target).unwrap(), review);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinks_are_resolved_before_parent_components() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempdir().unwrap();
+        let root = directory.path().join("root");
+        let other = directory.path().join("other");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(other.join("child")).unwrap();
+        symlink(other.join("child"), root.join("link")).unwrap();
+
+        let resolved = resolve_destination(&root.join("link/../review.json")).unwrap();
+
+        assert_eq!(resolved, other.join("review.json"));
     }
 }
