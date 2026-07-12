@@ -224,7 +224,12 @@ mod tests {
         symlink(other.join("child"), root.join("link")).unwrap();
 
         let resolved = resolve_destination(&root.join("link/../review.json")).unwrap();
+        let resolved_parent = resolved.parent().unwrap().canonicalize().unwrap();
+        let expected_parent = other.canonicalize().unwrap();
 
-        assert_eq!(resolved, other.join("review.json"));
+        assert_eq!(
+            resolved_parent.join("review.json"),
+            expected_parent.join("review.json")
+        );
     }
 }

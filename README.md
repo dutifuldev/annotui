@@ -17,7 +17,13 @@ Up/Down and press Enter, or click one, to edit it.
 
 ## Install
 
-annotui currently builds from source with Rust 1.88 or newer:
+Install from crates.io with Rust 1.88 or newer:
+
+```sh
+cargo install annotui
+```
+
+Or build from source:
 
 ```sh
 git clone https://github.com/dutifuldev/annotui.git
