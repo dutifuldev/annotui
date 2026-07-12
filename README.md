@@ -93,6 +93,8 @@ selection is unavailable while mouse capture is active.
 annotui is a Unix utility and requires a controlling terminal at `/dev/tty`. Input
 must currently be valid UTF-8. Source text is never modified.
 
+Fun fact: [annotui was built in 13 user messages](docs/2026-07-10-built-in-13-messages.md).
+
 ## License
 
 [MIT](LICENSE)
