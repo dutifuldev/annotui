@@ -313,6 +313,9 @@ fn handle_editor_key(key: KeyEvent, app: &mut App) {
 
 fn handle_browse_key(key: KeyEvent, app: &mut App) {
     match key.code {
+        KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.toggle_word_wrap();
+        }
         KeyCode::Char('q') => app.should_quit = true,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.should_quit = true;
@@ -350,12 +353,6 @@ fn handle_browse_key(key: KeyEvent, app: &mut App) {
         }
         KeyCode::Char(']') => app.jump_comment(true),
         KeyCode::Char('[') => app.jump_comment(false),
-        KeyCode::Char('h') | KeyCode::Left => {
-            app.horizontal_scroll = app.horizontal_scroll.saturating_sub(4);
-        }
-        KeyCode::Char('l') | KeyCode::Right => {
-            app.horizontal_scroll = app.horizontal_scroll.saturating_add(4);
-        }
         _ => {}
     }
 }
@@ -390,9 +387,10 @@ fn handle_mouse(mouse: MouseEvent, app: &mut App, hit_areas: &[HitArea]) {
                 app.open_selected_editor();
             }
         }
-        MouseEventKind::Up(_) => {
-            app.mouse_drag_anchor = None;
-        }
+        MouseEventKind::Up(_)
+        | MouseEventKind::Down(_)
+        | MouseEventKind::ScrollLeft
+        | MouseEventKind::ScrollRight => app.mouse_drag_anchor = None,
         MouseEventKind::ScrollDown => {
             if let Some(editor) = app.editor.as_mut() {
                 editor.textarea.scroll(Scrolling::PageDown);
@@ -409,13 +407,6 @@ fn handle_mouse(mouse: MouseEvent, app: &mut App, hit_areas: &[HitArea]) {
                 app.follow_cursor = false;
             }
         }
-        MouseEventKind::ScrollLeft => {
-            app.horizontal_scroll = app.horizontal_scroll.saturating_sub(4);
-        }
-        MouseEventKind::ScrollRight => {
-            app.horizontal_scroll = app.horizontal_scroll.saturating_add(4);
-        }
-        MouseEventKind::Down(_) => app.mouse_drag_anchor = None,
         MouseEventKind::Moved | MouseEventKind::Drag(_) => {}
     }
 }
@@ -427,7 +418,7 @@ mod tests {
     use ratatui::layout::Rect;
     use tempfile::tempdir;
 
-    use crate::{domain::ReviewDocument, source::SourceBuffer};
+    use crate::{app::WordWrap, domain::ReviewDocument, source::SourceBuffer};
 
     use super::*;
 
@@ -547,6 +538,26 @@ mod tests {
         );
 
         assert_eq!(app.review.comments.len(), 1);
+    }
+
+    #[test]
+    fn alt_z_toggles_word_wrap() {
+        let mut app = app();
+        assert_eq!(app.word_wrap, WordWrap::On);
+
+        handle_key(
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT),
+            &mut app,
+        );
+        assert_eq!(app.word_wrap, WordWrap::Off);
+        assert_eq!(app.status.as_deref(), Some("Word wrap off"));
+
+        handle_key(
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT),
+            &mut app,
+        );
+        assert_eq!(app.word_wrap, WordWrap::On);
+        assert_eq!(app.status.as_deref(), Some("Word wrap on"));
     }
 
     #[test]

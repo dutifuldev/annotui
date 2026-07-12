@@ -68,6 +68,12 @@ impl CommentEditor {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WordWrap {
+    On,
+    Off,
+}
+
 #[derive(Debug)]
 pub struct App {
     pub source: SourceBuffer,
@@ -77,7 +83,7 @@ pub struct App {
     pub editor: Option<CommentEditor>,
     pub active_comment_id: Option<u64>,
     pub scroll_row: usize,
-    pub horizontal_scroll: usize,
+    pub word_wrap: WordWrap,
     pub should_quit: bool,
     pub follow_cursor: bool,
     pub mouse_drag_anchor: Option<usize>,
@@ -97,7 +103,7 @@ impl App {
             editor: None,
             active_comment_id: None,
             scroll_row: 0,
-            horizontal_scroll: 0,
+            word_wrap: WordWrap::On,
             should_quit: false,
             follow_cursor: true,
             mouse_drag_anchor: None,
@@ -105,6 +111,21 @@ impl App {
             status: None,
             dirty: false,
         }
+    }
+
+    pub fn toggle_word_wrap(&mut self) {
+        self.word_wrap = match self.word_wrap {
+            WordWrap::On => WordWrap::Off,
+            WordWrap::Off => WordWrap::On,
+        };
+        self.follow_cursor = true;
+        self.status = Some(
+            match self.word_wrap {
+                WordWrap::On => "Word wrap on",
+                WordWrap::Off => "Word wrap off",
+            }
+            .into(),
+        );
     }
 
     pub fn move_cursor(&mut self, delta: isize) {

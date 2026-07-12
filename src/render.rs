@@ -11,18 +11,24 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::App,
+    app::{App, WordWrap},
     input::{HitArea, HitTarget},
 };
 
 const EDITOR_HEIGHT: usize = 5;
 const MINIMUM_HEIGHT: u16 = 7;
 const TAB_STOP: usize = 4;
+// fast-agent declares Black on Gray for prompt_toolkit's bottom toolbar, whose
+// built-in `reverse` style renders the effective terminal colors as Gray on Black.
+const FOOTER_FOREGROUND: Color = Color::Gray;
+const FOOTER_BACKGROUND: Color = Color::Black;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DocumentRow {
     Source {
         line_number: usize,
+        text: String,
+        first: bool,
         commented: bool,
         active: bool,
     },
@@ -86,14 +92,18 @@ fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 fn render_document(frame: &mut Frame<'_>, app: &mut App, area: Rect) -> Vec<HitArea> {
-    let rows = document_rows(app);
+    let line_digits = app.source.line_count().to_string().len();
+    let text_width = match app.word_wrap {
+        WordWrap::On => source_text_width(area.width, line_digits),
+        WordWrap::Off => usize::MAX,
+    };
+    let rows = document_rows(app, text_width);
     update_scroll(app, &rows, usize::from(area.height));
     let visible = rows
         .iter()
         .enumerate()
         .skip(app.scroll_row)
         .take(usize::from(area.height));
-    let line_digits = app.source.line_count().to_string().len();
     let mut hits = Vec::new();
     let mut editor_rect: Option<Rect> = None;
 
@@ -106,20 +116,8 @@ fn render_document(frame: &mut Frame<'_>, app: &mut App, area: Rect) -> Vec<HitA
             1,
         );
         match row {
-            DocumentRow::Source {
-                line_number,
-                commented,
-                active,
-            } => {
-                render_source_row(
-                    frame,
-                    app,
-                    rect,
-                    *line_number,
-                    line_digits,
-                    *commented,
-                    *active,
-                );
+            DocumentRow::Source { line_number, .. } => {
+                render_source_row(frame, app, rect, row, line_digits);
                 hits.push(HitArea::new(rect, HitTarget::SourceLine(*line_number)));
             }
             DocumentRow::Comment { id, text, first } => {
@@ -157,7 +155,7 @@ fn render_document(frame: &mut Frame<'_>, app: &mut App, area: Rect) -> Vec<HitA
     hits
 }
 
-fn document_rows(app: &App) -> Vec<DocumentRow> {
+fn document_rows(app: &App, text_width: usize) -> Vec<DocumentRow> {
     let mut rows = Vec::new();
     let editing_id = app.editor.as_ref().and_then(|editor| editor.comment_id);
     let editor_end = app.editor.as_ref().map(|editor| editor.end_line);
@@ -199,12 +197,22 @@ fn document_rows(app: &App) -> Vec<DocumentRow> {
             comments_covering_line = comments_covering_line.saturating_sub(ends);
             comments_covering_line = comments_covering_line.saturating_add(starts);
         }
-        rows.push(DocumentRow::Source {
-            line_number,
-            commented: comments_covering_line > 0,
-            active: active_range
-                .is_some_and(|(start, end)| start <= line_number && line_number <= end),
-        });
+        let commented = comments_covering_line > 0;
+        let active =
+            active_range.is_some_and(|(start, end)| start <= line_number && line_number <= end);
+        for (index, text) in
+            wrapped_line(app.source.line(line_number).unwrap_or_default(), text_width)
+                .into_iter()
+                .enumerate()
+        {
+            rows.push(DocumentRow::Source {
+                line_number,
+                text,
+                first: index == 0,
+                commented,
+                active,
+            });
+        }
         if let Some(comments) = comments_by_end.get(&line_number) {
             for comment in comments {
                 for (index, body_line) in comment.body.lines().enumerate() {
@@ -292,22 +300,32 @@ fn render_source_row(
     frame: &mut Frame<'_>,
     app: &App,
     area: Rect,
-    line_number: usize,
+    row: &DocumentRow,
     line_digits: usize,
-    commented: bool,
-    active: bool,
 ) {
+    let DocumentRow::Source {
+        line_number,
+        text,
+        first,
+        commented,
+        active,
+    } = row
+    else {
+        return;
+    };
     let selected = app
         .selection
-        .is_some_and(|selection| selection.contains(line_number));
-    let cursor =
-        app.cursor_line == line_number && app.editor.is_none() && app.active_comment_id.is_none();
+        .is_some_and(|selection| selection.contains(*line_number));
+    let cursor = *first
+        && app.cursor_line == *line_number
+        && app.editor.is_none()
+        && app.active_comment_id.is_none();
     let marker = if cursor { "▶" } else { " " };
-    let number = format!("{marker}{line_number:>line_digits$} ");
-    let text = horizontally_scrolled(
-        app.source.line(line_number).unwrap_or_default(),
-        app.horizontal_scroll,
-    );
+    let number = if *first {
+        format!("{marker}{line_number:>line_digits$} ")
+    } else {
+        format!(" {continuation:>line_digits$} ", continuation = "·")
+    };
     let style = if selected {
         Style::default().fg(Color::White).bg(Color::DarkGray)
     } else {
@@ -318,13 +336,13 @@ fn render_source_row(
     } else {
         Style::default().fg(Color::DarkGray)
     };
-    let rail = if commented { "┃" } else { "│" };
-    let rail_style = if active {
+    let rail = if *commented { "┃" } else { "│" };
+    let rail_style = if *active {
         Style::default()
             .fg(Color::Black)
             .bg(Color::Green)
             .add_modifier(Modifier::BOLD)
-    } else if commented {
+    } else if *commented {
         Style::default()
             .fg(Color::Green)
             .add_modifier(Modifier::BOLD)
@@ -335,7 +353,7 @@ fn render_source_row(
         Span::styled(number, number_style),
         Span::styled(rail, rail_style),
         Span::styled(" ", style),
-        Span::styled(text, style),
+        Span::styled(text.to_owned(), style),
     ]);
     frame.render_widget(Paragraph::new(line).style(style), area);
 }
@@ -373,19 +391,54 @@ fn extend_editor_rect(editor_rect: &mut Option<Rect>, row: Rect) {
     }
 }
 
-fn horizontally_scrolled(text: &str, columns: usize) -> String {
+fn source_text_width(area_width: u16, line_digits: usize) -> usize {
+    usize::from(area_width)
+        .saturating_sub(line_digits + 4)
+        .max(1)
+}
+
+fn wrapped_line(text: &str, width: usize) -> Vec<String> {
     let expanded = expand_tabs(text);
-    let mut skipped = 0;
-    expanded
-        .graphemes(true)
-        .skip_while(|grapheme| {
-            if skipped >= columns {
-                return false;
+    let graphemes = expanded.graphemes(true).collect::<Vec<_>>();
+    if graphemes.is_empty() {
+        return vec![String::new()];
+    }
+
+    let mut lines = Vec::new();
+    let mut start = 0;
+    while start < graphemes.len() {
+        let mut end = start;
+        let mut columns = 0usize;
+        let mut overflowed = false;
+        while end < graphemes.len() {
+            let grapheme_width = graphemes[end].width();
+            if end > start && columns.saturating_add(grapheme_width) > width {
+                overflowed = true;
+                break;
             }
-            skipped += grapheme.width();
-            true
-        })
-        .collect()
+            columns = columns.saturating_add(grapheme_width);
+            end += 1;
+            if columns >= width {
+                break;
+            }
+        }
+
+        if overflowed {
+            if let Some(break_index) = (start + 1..end)
+                .rev()
+                .find(|index| graphemes[*index].chars().all(char::is_whitespace))
+            {
+                end = break_index;
+            }
+        }
+
+        lines.push(graphemes[start..end].concat().trim_end().to_owned());
+        start = end;
+        while start < graphemes.len() && graphemes[start].chars().all(char::is_whitespace) {
+            start += 1;
+        }
+    }
+    lines
 }
 
 fn expand_tabs(text: &str) -> String {
@@ -420,7 +473,7 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
             &format!(" Lines {start}–{end} selected · {finish} to comment · Esc cancel "),
         );
     } else {
-        " drag or Shift-↑/↓ select · Enter comment · e edit · d delete · [/] comments · q quit "
+        " drag or Shift-↑/↓ select · Enter comment · e edit · d delete · Alt-Z wrap · q quit "
     };
     let text = app.status.as_deref().unwrap_or(help);
     render_footer_text(frame, area, text);
@@ -428,7 +481,7 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
 fn render_footer_text(frame: &mut Frame<'_>, area: Rect, text: &str) {
     frame.render_widget(
-        Paragraph::new(text).style(Style::default().fg(Color::Black).bg(Color::Gray)),
+        Paragraph::new(text).style(Style::default().fg(FOOTER_FOREGROUND).bg(FOOTER_BACKGROUND)),
         area,
     );
 }
@@ -462,6 +515,23 @@ mod tests {
         assert!(hits
             .iter()
             .any(|hit| hit.target == HitTarget::SourceLine(3)));
+    }
+
+    #[test]
+    fn footer_matches_fast_agent_effective_status_bar_colors() {
+        let source = SourceBuffer::from_bytes("sample", b"one\n").unwrap();
+        let review = ReviewDocument::empty(source.source_ref());
+        let mut app = App::new(source, review);
+        let backend = TestBackend::new(80, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| drop(render_app(frame, &mut app)))
+            .unwrap();
+
+        let footer_cell = &terminal.backend().buffer()[(0, 7)];
+        assert_eq!(footer_cell.fg, Color::Gray);
+        assert_eq!(footer_cell.bg, Color::Black);
     }
 
     #[test]
@@ -538,7 +608,7 @@ mod tests {
     }
 
     #[test]
-    fn following_cursor_scrolls_long_documents_and_horizontal_text() {
+    fn following_cursor_scrolls_long_documents() {
         let text = (1..=30)
             .map(|line| format!("line {line}"))
             .collect::<Vec<_>>()
@@ -547,16 +617,53 @@ mod tests {
         let review = ReviewDocument::empty(source.source_ref());
         let mut app = App::new(source, review);
         app.move_to_line(30);
-        app.horizontal_scroll = 5;
         let backend = TestBackend::new(40, 8);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| drop(render_app(frame, &mut app)))
             .unwrap();
         assert!(app.scroll_row > 0);
-        assert_eq!(horizontally_scrolled("abcdef", 3), "def");
-        assert_eq!(horizontally_scrolled("界abc", 2), "abc");
-        assert_eq!(horizontally_scrolled("e\u{301}abc", 1), "abc");
+    }
+
+    #[test]
+    fn source_lines_word_wrap_with_logical_line_hit_targets() {
+        let source =
+            SourceBuffer::from_bytes("sample", b"alpha beta gamma delta epsilon\nsecond line\n")
+                .unwrap();
+        let review = ReviewDocument::empty(source.source_ref());
+        let mut app = App::new(source, review);
+        let backend = TestBackend::new(24, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut hits = Vec::new();
+
+        terminal
+            .draw(|frame| hits = render_app(frame, &mut app))
+            .unwrap();
+
+        assert!(terminal.backend().to_string().contains("· │"));
+        assert!(
+            hits.iter()
+                .filter(|hit| hit.target == HitTarget::SourceLine(1))
+                .count()
+                > 1
+        );
+        assert_eq!(
+            wrapped_line("alpha beta gamma", 10),
+            ["alpha beta", "gamma"]
+        );
+        assert_eq!(wrapped_line("界界界", 4), ["界界", "界"]);
+        assert_eq!(wrapped_line("e\u{301}abc", 2), ["e\u{301}a", "bc"]);
+
+        app.toggle_word_wrap();
+        terminal
+            .draw(|frame| hits = render_app(frame, &mut app))
+            .unwrap();
+        assert_eq!(
+            hits.iter()
+                .filter(|hit| hit.target == HitTarget::SourceLine(1))
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -582,7 +689,7 @@ mod tests {
             .draw(|frame| drop(render_app(frame, &mut app)))
             .unwrap();
 
-        let focused_row = document_rows(&app)
+        let focused_row = document_rows(&app, 35)
             .iter()
             .position(|row| {
                 matches!(
@@ -605,10 +712,10 @@ mod tests {
     }
 
     #[test]
-    fn tabs_expand_to_four_column_stops_before_scrolling() {
+    fn tabs_expand_to_four_column_stops_before_wrapping() {
         assert_eq!(expand_tabs("\talpha"), "    alpha");
         assert_eq!(expand_tabs("a\tb"), "a   b");
         assert_eq!(expand_tabs("界\tb"), "界  b");
-        assert_eq!(horizontally_scrolled("a\tb", 4), "b");
+        assert_eq!(wrapped_line("a\tb", 4), ["a", "b"]);
     }
 }

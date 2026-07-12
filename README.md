@@ -68,6 +68,7 @@ Mouse controls:
 - Click a comment to edit it.
 - Use the wheel to scroll the document or active editor.
 - Saved ranges keep a green rail beside every source line they cover.
+- Long source lines wrap to the available terminal width.
 
 Keyboard controls:
 
@@ -81,7 +82,7 @@ Keyboard controls:
 | `Esc` | Cancel selection or editing |
 | `e` / `d` | Edit or delete a focused comment or one on the cursor line |
 | `[` / `]` | Jump to the previous/next comment |
-| `h` / `l` | Scroll long source lines horizontally |
+| `Alt-Z` | Toggle source-line word wrapping (on by default) |
 | `q` | Write output and quit |
 
 Pass `--no-mouse` when terminal mouse capture is undesirable. Native terminal text
