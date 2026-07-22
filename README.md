@@ -26,7 +26,7 @@ cargo install annotui
 Or build from source:
 
 ```sh
-git clone https://github.com/dutifuldev/annotui.git
+git clone https://github.com/osolmaz/annotui.git
 cd annotui
 cargo install --path .
 ```

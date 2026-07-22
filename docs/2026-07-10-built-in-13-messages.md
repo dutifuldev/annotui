@@ -24,7 +24,7 @@ is `019f4b23-b01a-7623-81e1-ee481a2eadee`.
 
 ## 2. The references
 
-> take herdr.dev and dutifuldev/ghzinga as inspiration
+> take herdr.dev and osolmaz/ghzinga as inspiration
 
 ## 3. Build it
 
@@ -102,8 +102,8 @@ is `019f4b23-b01a-7623-81e1-ee481a2eadee`.
 > ok. any followups we should do?
 
 Those messages produced the initial repository and three merged feature changes:
-[terminal review comments](https://github.com/dutifuldev/annotui/pull/1),
-[Shift-based range commenting](https://github.com/dutifuldev/annotui/pull/2), and
-[keyboard-focused comment editing](https://github.com/dutifuldev/annotui/pull/3).
+[terminal review comments](https://github.com/osolmaz/annotui/pull/1),
+[Shift-based range commenting](https://github.com/osolmaz/annotui/pull/2), and
+[keyboard-focused comment editing](https://github.com/osolmaz/annotui/pull/3).
 The installed binary and each merge were verified with unit, architecture, mutation,
 Slophammer, and tmux end-to-end tests.

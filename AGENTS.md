@@ -8,4 +8,4 @@
 - Add tests for every behavior change, including mouse hit testing when layout changes.
 - Prefer the standard library or existing dependencies over adding a crate.
 - Follow the Slophammer Rust guidance at
-  https://github.com/dutifuldev/slophammer/blob/main/docs/AGENT_ENTRYPOINT.md.
+  https://github.com/osolmaz/slophammer/blob/main/docs/AGENT_ENTRYPOINT.md.
